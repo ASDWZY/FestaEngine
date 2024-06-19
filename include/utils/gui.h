@@ -441,38 +441,6 @@ namespace Festa {
 		int pos = 0;
 	};
 
-	struct ImGuiDoubleClick {
-		UpdatingValue<float> time;
-		bool isClicked = false;
-		ImGuiDoubleClick() {
-			reset();
-		}
-		void reset() {
-			time = UpdatingValue<float>(-2000.0f, -1000.0f);
-			isClicked = false;
-		}
-		void update(bool x) {
-			isClicked = x;
-			if (x)time.update(getTime());
-		}
-		void update() {
-			update(ImGui::IsItemClicked());
-		}
-		bool clicked()const {
-			return isClicked;
-		}
-		bool focused()const {
-			return ImGui::IsItemFocused();
-		}
-		bool get() {
-			if (!clicked())return false;
-			return (time.now - time.prev) <= ImGui::GetIO().MouseDoubleClickTime;
-		}
-		operator bool() {
-			return get();
-		}
-	};
-
 
 	inline std::string ImGuiLeftLabel(const std::string& label) {
 		ImGui::Text(label.c_str());

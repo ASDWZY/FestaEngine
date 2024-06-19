@@ -31,16 +31,16 @@ namespace Festa {
 		~Shader() {
 			release();
 		}
-		void load(instring file) {
-			std::string post = file.substr(file.find_last_of('.') + 1);
+		void load(const Path& file) {
+			const std::string post = file.extension();
 			type = GL_VERTEX_SHADER;
 			if (post == "fs")type = GL_FRAGMENT_SHADER;
 			else if (post == "gs")type = GL_GEOMETRY_SHADER;
-			else if (post != "vs")LOGGER.error("Invalid shader type: " + file);
+			else if (post != "vs")LOGGER.error("Invalid shader type: " + file.toString());
 			std::string source; readString(file, source);
 			init(type, source.c_str(), file);
 		}
-		void load(int type, instring file) {
+		void load(int type, const Path& file) {
 			std::string source; readString(file, source);
 			init(type, source.c_str(), file);
 		}

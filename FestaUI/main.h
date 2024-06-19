@@ -22,7 +22,10 @@ public:
 		return false;
 	}
 	virtual bool renderComponents() {
-		return false;
+		return ImGui::Selectable(label.c_str(), &focused, ImGuiSelectableFlags_SpanAllColumns);
+	}
+	virtual void renderChildren() {
+
 	}
 	bool render() {
 		if (open) {
@@ -30,15 +33,20 @@ public:
 			if(!isLeaf)ImGui::SetNextItemOpen(true);
 		}
 		bool ret = true;
-		if(!isLeaf)ret=ImGui::TreeNode(("##" + label).c_str());
-		ImGui::SameLine();
+		if (!isLeaf) {
+			ret = ImGui::TreeNode(("##" + label).c_str());
+			ImGui::SameLine();
+		}
 		bool tmp = false;
 		tmp |= renderComponents();
-		tmp |= ImGui::Selectable(label.c_str(), &focused, ImGuiSelectableFlags_SpanAllColumns);
 		bool menu = renderMenu();
 		if (!menu && (ImGui::IsMouseDown(0) || ImGui::IsMouseDown(1)))focused = tmp;
 		if (menu)focused = true;
 		if (ImGui::IsItemHovered()&&ImGui::IsMouseDoubleClicked(0))open = true;
+		if (ret&&!isLeaf) {
+			renderChildren();
+			ImGui::TreePop();
+		}
 		return ret;
 	}
 };
@@ -120,17 +128,88 @@ public:
 };
 
 
+
 class PathTreeNode :public ImGuiTreeNode {
 public:
+	class SubTreeNode :public ImGuiTreeNode {
+	public:
+		JsonData* data = 0;
+		PathTreeNode* father = 0;
+		SubTreeNode() {}
+		SubTreeNode(const string& _label, JsonData& _data,PathTreeNode* _father) {
+			label = _label;
+			data = &_data;
+			father = _father;
+			isLeaf = true;
+		}
+		bool renderComponents() {
+			bool ret=false;
+			if (data->isString()|| data->to<int>()) {
+				ImGui::Bullet();
+				ret |= ImGui::IsItemHovered();
+				ImGui::SameLine();
+				ret|=ImGui::Selectable(label.c_str(), &focused, ImGuiSelectableFlags_SpanAllColumns);
+			}
+			else {
+				ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
+				ImGui::Bullet();
+				ret |= ImGui::IsItemHovered();
+				ImGui::SameLine();
+				ret |= ImGui::Selectable(label.c_str(), &focused, ImGuiSelectableFlags_SpanAllColumns);
+				ImGui::PopStyleColor(1);
+			}
+			return ret;
+		}
+		bool renderMenu() {
+			if (ImGui::BeginPopupContextItem()) {
+				if (data->isString()) {
+					if (ImGui::MenuItem("Delete")) {
+						father->data->erase(label);
+						ImGui::EndMenu();
+						return true;
+					}
+				}
+				else if (data->to<int>()) {
+					if (ImGui::MenuItem("Disable")) {
+						data->to<int>() = 0;
+						ImGui::EndMenu();
+						return true;
+					}
+				}
+				else if (ImGui::MenuItem("Enable")) {
+					data->to<int>() = 1;
+					ImGui::EndMenu();
+					return true;
+				}
+				ImGui::EndPopup();
+				return true;
+			}
+			return false;
+		}
+	};
+
 	bool dir = false;
+	std::list<SubTreeNode> ch;
+	JsonData* data = 0;
 	PathTreeNode() {}
-	void init(const string& _label, bool _dir) {
+	void init(JsonData& _data,const string& _label, bool _dir) {
+		ch.clear();
 		label = string2u8(_label); dir = _dir;
+		data = &_data;
+		open = true;
+		for (auto i : _data) {
+			ch.emplace_back(SubTreeNode(i.first,i.second,this));
+		}
 	}
 	bool renderMenu() {
 		if (ImGui::BeginPopupContextItem()) {
 			if (ImGui::MenuItem("Add")) {
-				cout << "add\n";
+				Path path=askOpenFileName(0, L"All(*.*)\0*.*\0", "Open");
+				if ((dir && path.isDirectory()) || (!dir && path.isFile())) {
+					const string p = path.toString();
+					data->insert(p, "");
+					ch.emplace_back(SubTreeNode(p,(*data)[p],this));
+				}
 				ImGui::EndMenu();
 				return true;
 			}
@@ -138,6 +217,16 @@ public:
 			return true;
 		}
 		return false;
+	}
+	void renderChildren() {
+		for (auto it = ch.begin(); it != ch.end();it++) {
+			it->render();
+			if (!data->find(it->label)) {
+				ch.erase(it);
+				break;
+			}
+		}
+		ImGui::Text("");
 	}
 };
 
@@ -149,7 +238,7 @@ public:
 	JsonComponent comp;
 
 
-	PathTreeNode sourceFiles, includeDirs;
+	PathTreeNode sourceFiles, includeDirs,libFiles;
 
 	ProjectPage() {
 		format.load(formatFile);
@@ -159,8 +248,12 @@ public:
 		copy = app.project.cmake.data;
 		_app = &app;
 
-		sourceFiles.init("Source files", false);
-		includeDirs.init("Include directories", true);
+		initPaths();
+	}
+	void initPaths() {
+		sourceFiles.init(copy["Project"]["Source files"], "Source files", false);
+		includeDirs.init(copy["Project"]["Include directories"], "Include directories", true);
+		libFiles.init(copy["Project"]["Library files"], "Library files", false);
 	}
 	void render() {
 		JsonData& data = _app->project.cmake.data;
@@ -172,11 +265,14 @@ public:
 		if (genx != gen) {
 			_app->project.cmake.writeCMakeLists();
 		}
-		pathList(project,"Source files",sourceFiles);
-		pathList(project, "Include directories",includeDirs);
+		sourceFiles.render();
+		includeDirs.render();
+		libFiles.render();
+		//pathList(project,"Source files",sourceFiles);
+		//pathList(project, "Include directories",includeDirs);
 		if (ImGui::Button("Reset to Default")) {
-			//_app->project.reset(*_app);
-			CMakeProject::defaultConfig(copy,_app->project.cmake.projectName());
+			CMakeProject::defaultConfig(copy, _app->project.cmake.projectName());
+			initPaths();
 		}
 		ImGui::SameLine();
 		if (ImGui::Button("OK")) {

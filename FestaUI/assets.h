@@ -1,5 +1,6 @@
 #pragma once
 #include "app.h"
+#include <shlobj.h>
 
 #define KEY_SHOW_HIDDEN "Show hidden files and directories"
 #define KEY_AUTO_SRC "Automatically find source files"
@@ -29,23 +30,47 @@ inline Image extractIcon(const wstring& filePath) {
 	return ret;
 }
 
-inline void setClipBoard(const string& content) {
-	if (OpenClipboard(NULL)) {
-		EmptyClipboard();
-		HGLOBAL hClipboardData;
-		//const char* data = "Hello, this is a text to be copied to clipboard.";
-		//int size = strlen(data) + 1; // Include null terminator
+inline int CopyPathToClipboard(const Path& path,bool copy=true)
+{
+	UINT uDropEffect;
+	HGLOBAL hGblEffect;
+	LPDWORD lpdDropEffect;
+	DROPFILES stDrop;
 
-		hClipboardData = GlobalAlloc(GMEM_DDESHARE, content.size());
-		char* buffer = (char*)GlobalLock(hClipboardData);
-		strcpy(buffer, content.c_str());
-		GlobalUnlock(hClipboardData);
+	HGLOBAL hGblFiles;
+	LPSTR lpData;
+	uDropEffect = RegisterClipboardFormat(L"Preferred DropEffect");
+	hGblEffect = GlobalAlloc(GMEM_ZEROINIT | GMEM_MOVEABLE | GMEM_DDESHARE, sizeof(DWORD));
+	if (!hGblEffect)return 0;
+	lpdDropEffect = (LPDWORD)GlobalLock(hGblEffect);
+	if (!lpdDropEffect)return 0;
+	if (copy)*lpdDropEffect = DROPEFFECT_COPY;
+	else *lpdDropEffect = DROPEFFECT_MOVE;
+	GlobalUnlock(hGblEffect);
 
-		SetClipboardData(CF_TEXT, hClipboardData);
-		CloseClipboard();
-	}
+	stDrop.pFiles = sizeof(DROPFILES);
+	stDrop.pt.x = 0;
+	stDrop.pt.y = 0;
+	stDrop.fNC = FALSE;
+	stDrop.fWide = FALSE;
+
+	hGblFiles = GlobalAlloc(GMEM_ZEROINIT | GMEM_MOVEABLE | GMEM_DDESHARE, \
+		sizeof(DROPFILES) + path.size() + 2);
+	if (!hGblFiles)return 0;
+	lpData = (LPSTR)GlobalLock(hGblFiles);
+	if (!lpData)return 0;
+	memcpy(lpData, &stDrop, sizeof(DROPFILES));
+	strcpy(lpData + sizeof(DROPFILES), path.toString().c_str());
+	GlobalUnlock(hGblFiles);
+
+	OpenClipboard(NULL);
+	EmptyClipboard();
+	SetClipboardData(CF_HDROP, hGblFiles);
+	SetClipboardData(uDropEffect, hGblEffect);
+	CloseClipboard();
+
+	return 1;
 }
-
 
 
 struct IconExtractor {
@@ -122,23 +147,12 @@ public:
 		}
 		void init(App& app,const Path& _path,Node* _father) {
 			path = _path; father = _father;
-			if (!path.isDirectory()) {
-				string p = path.extension();
-				if (p == "cpp" || p == "c")type = LEAF_SRC;
-				else if (p == "h" || p == "hpp")type = LEAF_HEAD;
-				else if (p == "glsl" || p == "vs" || p == "gs" || p == "fs")type = LEAF_GLSL;
-				else if (p == "png" || p == "jpg" || p == "bmp")type = LEAF_PIC;
-				else if (p == "mp4" || p == "wav")type = LEAF_AUDIO;
-				else type = LEAF_TEXT;
-
-				if (!p.size())icon = ICON_EXTRACTOR.icons["txt"];
-				else icon = ICON_EXTRACTOR.extract(path);
-			}
-			else {
-				icon = ICON_EXTRACTOR.extract(path);
-				build(app);
-			}
-			label = path.back();
+			type = getFileType(path);
+			if(path.isDirectory())build(app);
+			if (type == LEAF_ASSET) {
+				icon = ICON_EXTRACTOR.getAssetIcon();
+			}else icon = ICON_EXTRACTOR.extract(path);
+			label = string2u8(path.back());
 			hidden = label == "CMakeLists.txt" || label[0] == '.';
 			src = app.isSourceFile(path);
 		}
@@ -150,10 +164,6 @@ public:
 			path.glob(arr);
 			for (Path& p : arr) {
 				if (children.find(p.back().toString()) != children.end())continue;
-				if (p.back().toString() == AssetCode) {
-					type = LEAF_ASSET;
-					icon = ICON_EXTRACTOR.getAssetIcon();
-				}
 				children[p.back().toString()].init(app,p, this);
 			}
 			bool changed = false;
@@ -193,6 +203,11 @@ public:
 			for (auto& i : children)
 				i.second.renameTabs(app, newPath + i.first);
 		}
+		void clearFocus() {
+			focused = false;
+			for (auto& i : children)
+				i.second.clearFocus();
+		}
 		void selectable(App& app,Node*& current) {
 			bool tmp = false;
 			if (icon) {
@@ -213,7 +228,7 @@ public:
 				tmp |= ImGui::IsItemHovered();
 			}
 			else {
-				tmp|=ImGui::Selectable(string2u8(label).c_str(),&focused, ImGuiSelectableFlags_SpanAllColumns);
+				tmp|=ImGui::Selectable((label+"##"+path.toString()).c_str(), &focused, ImGuiSelectableFlags_SpanAllColumns);
 			}
 			bool menu;
 			if (isLeaf() && this != current)menu = fileMenu(app, current);
@@ -223,13 +238,19 @@ public:
 				focused = tmp;
 				
 			if (menu)focused = true;
-			
+			if (focused) {
+				current->clearFocus();
+				focused = true;
+				if (app.window.getKey(GLFW_KEY_DELETE)) {
+					del(app,current);
+				}
+			}
 			if (rename&&!focused)endRename(app);
 		}
 		bool treeNode(App& app,Node*& current) {
 			if(openTree.firstPressed())
 				ImGui::SetNextItemOpen(true, ImGuiCond_Always);
-			bool ret = ImGui::TreeNode(("##" + label).c_str());
+			bool ret = ImGui::TreeNode(("##" + path.toString()).c_str());
 			openTree.update(ret);
 			ImGui::SameLine(); selectable(app,current);
 			if (openTree.firstPressed()||(!rename && ImGui::IsMouseDoubleClicked(0)&&ImGui::IsItemHovered())) {
@@ -247,6 +268,17 @@ public:
 				for (auto& i:children) {
 					i.second.deleteNode(app);
 				}
+			}
+		}
+		void del(App& app,Node*& current) {
+			if(!isLeaf()||type==LEAF_ASSET) {
+				if (this == current)current = father;
+				path.deleteDirectory();
+				deleteNode(app);
+			}
+			else {
+				path.deleteFile();
+				deleteNode(app);
 			}
 		}
 		bool dirMenu(App& app,Node*& current) {
@@ -296,8 +328,7 @@ public:
 					return true;
 				}
 				if (ImGui::MenuItem("Delete")) {
-					path.deleteDirectory();
-					deleteNode(app);
+					del(app,current);
 					ImGui::EndMenu();
 					return true;
 				}
@@ -315,12 +346,7 @@ public:
 					return true;
 				}
 				if (ImGui::MenuItem("Delete")) {
-					if (type == LEAF_ASSET) {
-						if (this == current)current = father;
-						path.deleteDirectory();
-					}
-					else path.deleteFile();
-					deleteNode(app);
+					del(app,current);
 					ImGui::EndMenu();
 					return true;
 				}
@@ -347,6 +373,7 @@ public:
 			app.openFile(path, type);
 		}
 		void CV(App& app) {
+			if (!focused)return;
 			if(
 				app.window.getKey(GLFW_MOD_CONTROL|GLFW_KEY_V) && OpenClipboard(NULL)) {
 				HANDLE hData = GetClipboardData(CF_HDROP);
@@ -357,15 +384,19 @@ public:
 						for (UINT i = 0; i < numFiles; i++) {
 							wchar_t filePath[MAX_PATH];
 							if (DragQueryFile(hDrop, i, filePath, MAX_PATH)) {
-								Path np = path.getDirectory() + Path(filePath).back();
-								if (np.exists())continue;
-								CopyFile(filePath, string2wstring(np.toWindows()).c_str(), FALSE);
+								const Path t = Path(filePath);
+								const Path np = path.getDirectory() + t.back();
+								if (t.isFile())t.copyFile(np);
+								else if (t.isDirectory())t.copyDirectory(np);
 							}
 						}
 						GlobalUnlock(hDrop);
 					}
 				}
 				CloseClipboard();
+			}
+			if (app.window.getKey(GLFW_MOD_CONTROL | GLFW_KEY_C)) {
+				CopyPathToClipboard(path);
 			}
 		}
 		void renderTree(App& app, Node*& current) {

@@ -327,7 +327,7 @@ namespace Festa {
             return ret;
         }
         int toID(const vec3& color) {
-            float tmp = T - off,t=T;
+            float tmp = float(T - off),t=float(T);
             std::cout << (color.x + color.y * t + color.z * t * t) * float(T - 1) << std::endl;
             return int((color.x + color.y * t + color.z * t * t)* float(T - 1))-1;
         }

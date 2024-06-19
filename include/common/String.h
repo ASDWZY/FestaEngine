@@ -391,18 +391,18 @@ namespace Festa {
 			}
 			return true;
 		}
-		void deleteFile() {
+		void deleteFile()const {
 			DeleteFile(string2wstring(path).c_str());
 		}
-		void createFile() {
+		void createFile()const {
 			if (exists())return;
 			std::ofstream f(path, std::ios::out);
 			f.close();
 		}
-		void rename(const Path& newName) {
+		void rename(const Path& newName)const {
 			std::rename(path.c_str(), newName.toString().c_str());
 		}
-		void deleteDirectory() {
+		void deleteDirectory()const {
 			if (!exists())return;
 			std::vector<Path> arr; glob(arr);
 			for (Path& p : arr) {
@@ -410,6 +410,18 @@ namespace Festa {
 				else p.deleteDirectory();
 			}
 			_rmdir(path.c_str());
+		}
+		void copyFile(const Path& to)const {
+			CopyFile(string2wstring(path).c_str(), string2wstring(to.toWindows()).c_str(), FALSE);
+		}
+		void copyDirectory(const Path& to)const {
+			if (!to.exists())to.createDirectory();
+			std::vector<Path> arr; globRelatively(arr);
+			for (Path& p : arr) {
+				Path tmp = *this + p;
+				if (tmp.isFile())tmp.copyFile(to+p);
+				else p.copyDirectory(to+p);
+			}
 		}
 		friend std::ostream& operator<< (std::ostream& out, const Path& path) {
 			out << path.path;

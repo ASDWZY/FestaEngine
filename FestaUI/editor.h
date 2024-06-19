@@ -9,7 +9,7 @@ using namespace std;
 using namespace Festa;
 
 enum LeafType {
-	NOT_LEAF = -1, LEAF_SRC, LEAF_HEAD, LEAF_GLSL, LEAF_TEXT, LEAF_PIC, LEAF_AUDIO, LEAF_ASSET, LEAF_MAX
+	NOT_LEAF = -1, LEAF_SRC, LEAF_HEAD, LEAF_GLSL, LEAF_TEXT, LEAF_PIC, LEAF_AUDIO,LEAF_LIB, LEAF_ASSET, LEAF_MAX
 };
 const Path FESTA_PROJECTS_DIR = FESTA_ROOT + Path("FestaProjects");
 const string AssetCode = ".main.festa";
@@ -17,6 +17,7 @@ const string AssetCode = ".main.festa";
 typedef ImGuiTextEditor::EditorParams EditorParams;
 namespace Editors {
 	EditorParams params;
+	CodeAnalysis::CppSources cppSources;
 }
 void alphaImage(Image& img, uchar alpha = 255, uchar thres = 180) {
 	img.resetChannels(4);
@@ -38,10 +39,12 @@ inline LeafType getFileType(const Path& path) {
 		else if (p == "h" || p == "hpp")return LEAF_HEAD;
 		else if (p == "glsl" || p == "vs" || p == "gs" || p == "fs")return LEAF_GLSL;
 		else if (p == "png" || p == "jpg" || p == "bmp")return LEAF_PIC;
-		else if (p == "mp4" || p == "wav")return LEAF_AUDIO;
+		else if (p == "mp4" || p == "mp3" || p == "wav")return LEAF_AUDIO;
+		else if (p == "dll"||p=="lib")return LEAF_LIB;
 		else return LEAF_TEXT;
 	}
-	else return LEAF_ASSET;
+	if ((path + AssetCode).exists())return LEAF_ASSET;
+	else return NOT_LEAF;
 }
 
 class ImGuiPage {
@@ -190,7 +193,7 @@ public:
 	CppEditor(const Path& _path) :path(_path) {
 		editor.showLineNumber = true;
 		editor.params = &Editors::params;
-		assistant.init(editor);
+		assistant.init(path,editor,Editors::cppSources);
 		saveTimer = TaskTimer(0.7f, [this] {save(); });
 		string text; readString(path, text);
 		editor.PushText<CppAssistant>(text);

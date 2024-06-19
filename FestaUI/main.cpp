@@ -34,7 +34,6 @@ void App::FestaConfig::init(App& _app) {
 	reinit();
 }
 
-
 void App::FestaConfig::reinit() {
 	if (!_reinit)return;
 	_reinit = false;
@@ -138,16 +137,33 @@ static void initMenu(App& app) {
 	menubar.addMenu("Festa", festa);
 	menubar.bind(app.window.hwnd);
 }
+
+using namespace CodeAnalysis;
+
+void test() {
+	string code =
+		"#include <iost\\\nream >\n";
+	std::list<Message> errors;
+	CppAnalysis x(errors);
+	CppFileSource src;
+	x.parse(code, src);
+	cout << "ERROR:\n";
+	for (Message& error : errors) {
+		cout << error.begin.y << ":" << error.begin.x << " - " <<
+			error.end.y << ":" << error.end.x <<
+			error.msg << endl;
+	}
+	exit(0);
+}
 int main() {
+	//test();
+	
 	App app;
 	NewProject newProject; newProject.reg(app);
 	ProjectConfigurations pc; pc.reg(app);
 	AssetsTree assetsTree; assetsTree.reg(app);
 	initMenu(app);
-
-
 	LOGGER.debug("Run.");
-	
 	app.run();
 	LOGGER.debug("Exit");
 	return 0;

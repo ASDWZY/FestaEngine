@@ -143,14 +143,22 @@ public:
 		data.load(CMakeFiles::defaultFile);
 		data["Project"]["Project name"].data = name;
 		data["Project"]["Festa version"].data = FESTA_VERSION.toStr();
-		JsonData& includes = data["Project"]["Include directories"];
-		JsonData& sources = data["Project"]["Source files"];
-		includes.insert(FESTA_ROOT.toString(), 1);
-		includes.insert((FESTA_ROOT + Path("3rd")).toString(), 1);
-		includes.insert((FESTA_ROOT + Path("3rd/freetype")).toString(), 1);
-
-		sources.insert((FESTA_ROOT + Path("src/Festa.cpp")).toString(), 1);
-		sources.insert((FESTA_ROOT + Path("src/imgui.cpp")).toString(), 1);
+		insertFestaRoot(data["Project"]["Source files"], false);
+		insertFestaRoot(data["Project"]["Include directories"], true);
+		insertFestaRoot(data["Project"]["Library files"], false);
+	}
+	static void insertFestaRoot(JsonData& data,bool dir) {
+		JsonData tmp = data;
+		for (auto i : tmp) {
+			if (!i.first.size())data.erase(i.first);
+			Path p;
+			if (i.first[0] == '+') {
+				p = FESTA_ROOT +
+					i.first.substr(1, i.first.size() - 1);
+				if ((dir && !p.isDirectory()) || (!dir && !p.isFile()))data.erase(i.first);
+				else data.rename(i.first, p.toString());
+			}
+		}
 	}
 	void create(const string& name,const Path& _file) {
 		file = _file;
@@ -192,7 +200,7 @@ public:
 		ret += cmakeFunc("cmake_minimum_required", { "VERSION",data["Project"][KEY_CMAKE_VERSION] });
 		ret += cmakeFunc("Project", {projectName()});
 		ret += cmakeFunc("set", {"CMAKE_CXX_STANDARD",data["Project"]["stdc++"]});
-		JsonData includes = data["Project"]["Include directories"];
+		JsonData& includes = data["Project"]["Include directories"];
 		for (auto i : includes) {
 			if (i.second.isString() || i.second.to<int>())
 				q.push(i.first);
@@ -207,11 +215,11 @@ public:
 		}
 		ret += cmakeFunc("add_executable", q);
 		
-		vector<Path> libs;
-		(FESTA_ROOT + Path("libs")).glob(libs,"*.lib");
+		JsonData& libs = data["Project"]["Library files"];
 		q.push("${PROJECT_NAME}");
-		for (Path& p : libs)
-			if (p.isFile())q.push(p.toString());
+		for (auto i : libs)
+			if (i.second.isString() || i.second.to<int>())
+				q.push(i.first);
 		ret += cmakeFunc("target_link_libraries", q);
 
 		return ret;
@@ -241,8 +249,15 @@ public:
 		}
 		s = sources;
 	}
+	CommandStream* runCommands(const string& cmd) {
+		const Path bd = projectDir() + CMakeFiles::buildDir;
+		writeString(bd + CMakeFiles::runShell, "@echo off\n"+cmd);
+		CommandStream* ret = new CommandStream((bd + CMakeFiles::runShell).toWindows());
+		ret->start();
+		return ret;
+	}
 	CommandStream* build(bool warning) {
-		Path bd = projectDir() + CMakeFiles::buildDir;
+		const Path bd = projectDir() + CMakeFiles::buildDir;
 		if (!building.size()&&bd.exists())return 0;
 		while (building.size())building.pop();
 		if (!buildable(warning))return 0;
@@ -254,11 +269,8 @@ public:
 		bd.deleteDirectory();
 		bd.createDirectory();
 		string cmakePath = (FESTA_ROOT + Path("CMake/bin/cmake.exe")).toWindows();
-		writeString(bd+ CMakeFiles::runShell,"@echo off\ncd "+bd.toString() + "\n"+
-			cmakePath+" -G \""+compiler+" Makefiles\" ..");
-		CommandStream* ret=new CommandStream((bd + CMakeFiles::runShell).toWindows());
-		ret->start();
-		return ret;
+		return runCommands("cd "+bd.toString() + "\n"+
+			cmakePath + " -G \"" + compiler + " Makefiles\" ..");
 	}
 	CommandStream* compile(bool warning) {
 		if (!compiling.size())return 0;
@@ -270,18 +282,11 @@ public:
 		}
 		cout << "compiling...\n";
 		Path bd = projectDir() + CMakeFiles::buildDir;
-		writeString(bd + CMakeFiles::runShell, "@echo off\ncd " + bd.toString() + "\n"+
-		"make");//(FESTA_ROOT+Path("mingw64/bin/make.exe")).toWindows()
-		cout << "cmd:\n";
-		CommandStream* ret = new CommandStream((bd + CMakeFiles::runShell).toWindows());
-		ret->start();
-		return ret;
+		return runCommands("cd " + bd.toString() + "\nmake");
 	}
 	CommandStream* run() {
-		CommandStream* ret = new CommandStream((projectDir() + CMakeFiles::buildDir +
-			Path(projectName() + ".exe")).toWindows());
-		ret->start();
-		return ret;
+		return runCommands("cd " + projectDir().toString() + 
+			"\n.\\.build\\"+ projectName() + ".exe");
 	}
 
 	void build() {

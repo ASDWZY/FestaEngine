@@ -2,24 +2,13 @@
 
 #include "../common/common.h"
 #include "../utils/gui.h"
-
+#include "CodeAnalysis.h"
 
 namespace Festa {
 	class ImGuiTextEditor {
 	public:
 		typedef std::vector<uint> Palette;
-		enum Colors {
-			BACKGROUND,
-			LINE_NUMBER,
-			CURSOR,
-			SELECTION,
-
-			TEXT,
-			NUMBER,
-			PUNCTUATION,
-			STRING,
-			COLOR_MAX
-		};
+		using Colors=CodeAnalysis::ExpressionType;
 		struct EditorParams {
 			ImFont* font = 0;
 			Palette palette;
@@ -31,6 +20,7 @@ namespace Festa {
 					color(214,214,214),//line number 0.3f, 0.9f, 0.9f
 					color(1.0f, 1.0f, 1.0f),//cursor
 					color(0.2f, 0.2f, 0.6f),//selection
+					color(1.0f,0.0f,0.0f,0.5f),//error marker
 
 					color(1.0f,1.0f,1.0f),//text
 					color(0.1f,0.9f,0.2f),//number
@@ -74,8 +64,8 @@ namespace Festa {
 				float offset = 0.0f;
 				float space = ImGui::GetFont()->CalcTextSizeA(ImGui::GetFontSize(), FLT_MAX, -1.0f, " ").x;
 				for (uint i = 0; i < colors.size(); i++) {
-					if (colors[i].color == BACKGROUND) {
-						uint end = i == colors.size() - 1 ? text.size() : colors[i + 1].start;
+					if (colors[i].color == Colors::BACKGROUND) {
+						uint end = i == colors.size() - 1 ? uint(text.size()) : colors[i + 1].start;
 						for (uint j = colors[i].start; j < end; j++) {
 							if (text[j] == '\t')offset += indent*space;
 							else offset += space;
@@ -156,8 +146,13 @@ namespace Festa {
 		}
 		template<typename assistant_t>
 		void Render() {
+
+			if (ImGui::Button("Update")&&assistant) {
+				((assistant_t*)assistant)->applyChanges();
+			}
+
 			if (params->font)ImGui::PushFont(params->font);
-			ImGui::PushStyleColor(ImGuiCol_ChildBg, ImGui::ColorConvertU32ToFloat4(params->palette[BACKGROUND]));
+			ImGui::PushStyleColor(ImGuiCol_ChildBg, ImGui::ColorConvertU32ToFloat4(params->palette[Colors::BACKGROUND]));
 			ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.0f, 0.0f));
 			ImGui::BeginChild("##Text", ImVec2(), false, ImGuiWindowFlags_HorizontalScrollbar | ImGuiWindowFlags_AlwaysHorizontalScrollbar | ImGuiWindowFlags_NoMove);
 			ImVec2 charAdvance = GetCharAdvance();
@@ -187,7 +182,7 @@ namespace Festa {
 				if (showLineNumber) {
 					const string num = toString(lineIndex + 1);
 					float numberWidth = ImGui::GetFont()->CalcTextSizeA(ImGui::GetFontSize(), FLT_MAX, -1.0f, num.c_str(), nullptr, nullptr).x;
-					drawList->AddText(ImVec2(lineStart.x + (lineNumberOff - numberWidth)/2.0f, lineStart.y),params->palette[LINE_NUMBER], num.c_str());
+					drawList->AddText(ImVec2(lineStart.x + (lineNumberOff - numberWidth)/2.0f, lineStart.y),params->palette[Colors::LINE_NUMBER], num.c_str());
 				}
 
 				if (_sel && selbegin.y <= lineIndex && lineIndex <= selend.y) {
@@ -195,8 +190,29 @@ namespace Festa {
 						r = lineIndex == selend.y ? selend.x : lines[lineIndex].text.size();
 					float off = l < r ? 0.0f : charAdvance.x;
 					drawList->AddRectFilled(
-						ImVec2(textPos + lines[lineIndex].getOffset(l), lineStart.y),
-						ImVec2(textPos + lines[lineIndex].getOffset(r)+off, lineStart.y + charAdvance.y), params->palette[SELECTION]);
+						ImVec2(textPos + lines[lineIndex].getOffset(l), 
+							lineStart.y),
+						ImVec2(textPos + lines[lineIndex].getOffset(r)+off, 
+							lineStart.y + charAdvance.y), 
+						params->palette[Colors::SELECTION]);
+				}
+				for (auto& err : errors) {
+					if (err.begin.y <= lineIndex && lineIndex <= err.end.y) {
+						uint l = lineIndex == err.begin.y ? err.begin.x : 0,
+							r = lineIndex == err.end.y ? err.end.x : lines[lineIndex].text.size();
+						float off = l < r ? 0.0f : charAdvance.x;
+						ImVec2 lt(textPos + lines[lineIndex].getOffset(l),
+							lineStart.y), rb(textPos + lines[lineIndex].getOffset(r) + off,
+								lineStart.y + charAdvance.y);
+						drawList->AddRectFilled(lt,rb,params->palette[Colors::ERRORMARKER]);
+						if (ImGui::IsMouseHoveringRect(lt,rb)){
+							ImGui::BeginTooltip();
+							ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.2f, 0.2f, 1.0f));
+							ImGui::Text(err.msg.c_str());
+							ImGui::PopStyleColor();
+							ImGui::EndTooltip();
+						}
+					}
 				}
 				
 				if (ImGui::IsWindowFocused()&&lineIndex==cursorPos.y) {
@@ -205,7 +221,9 @@ namespace Festa {
 					}
 					if (showCursor) {
 						float st = lines[lineIndex].getOffset(cursorPos.x) + textPos;
-						drawList->AddRectFilled(ImVec2(st, lineStart.y), ImVec2(st + 4.0f, lineStart.y + charAdvance.y), params->palette[CURSOR]);
+						drawList->AddRectFilled(ImVec2(st, lineStart.y), 
+							ImVec2(st + 4.0f, lineStart.y + charAdvance.y), 
+							params->palette[Colors::CURSOR]);
 					}
 				}
 				float off=lines[lineIndex].render(drawList,params->palette,ImVec2(textPos,lineStart.y),params->indentSize);
@@ -242,10 +260,11 @@ namespace Festa {
 					lines[y].text.push_back(text[i]);
 				}
 			}
+			uint x = lines[y].text.size();
 			lines[y].text += back;
 			if (assistant)
 				((assistant_t*)assistant)->ColorizeLine(y);
-			return ivec2(lines[y].text.size(),y);
+			return ivec2(x,y);
 		}
 		template<typename assistant_t>
 		void PushText(const std::string& _text) {
@@ -307,7 +326,7 @@ namespace Festa {
 			ivec2 selbegin = _cursorPos, selend = _selPos;
 			SwapSelection(selbegin, selend);
 			string ret;
-			for (uint i = selbegin.y; i <= selend.y; i++) {
+			for (int i = selbegin.y; i <= selend.y; i++) {
 				uint l = i == selbegin.y ? selbegin.x : 0,
 					r = i == selend.y ? selend.x : lines[i].text.size();
 				ret += lines[i].text.substr(l,r-l);
@@ -315,7 +334,17 @@ namespace Festa {
 			}
 			return ret;
 		}
+		void SetErrors(const std::list<CodeAnalysis::Message>& _errors) {
+			errors = _errors;
+		}
+		void AddError(const CodeAnalysis::Message& err) {
+			errors.emplace_back(err);
+		}
+		void ClearErrors() {
+			errors.clear();
+		}
 	private:
+		std::list<CodeAnalysis::Message> errors;
 		bool _sel = false;
 		void* assistant = 0;
 		ivec2 _cursorPos = ivec2(0),_selPos=ivec2(0);
@@ -402,7 +431,8 @@ namespace Festa {
 					ImGui::SetClipboardText(GetSelectionText().c_str());
 				else if (!readOnly && ImGui::IsKeyPressed(ImGui::GetKeyIndex(ImGuiKey_V))) {
 					if (_sel)ClearSelection<assistant_t>();
-					_cursorPos = PushText<assistant_t>(ImGui::GetClipboardText(), _cursorPos);
+					const char* ptr = ImGui::GetClipboardText();
+					if(ptr)_cursorPos = PushText<assistant_t>(ptr, _cursorPos);
 				}
 				else if (ImGui::IsKeyPressed(ImGui::GetKeyIndex(ImGuiKey_A)))
 					_selPos=ivec2(0,0),_cursorPos = ivec2(lines.back().text.size(),lines.size()-1),_sel=true;
@@ -551,27 +581,20 @@ namespace Festa {
 				((assistant_t*)assistant)->Enter();
 			}
 		}
-		template<typename assistant_t>
-		void Tab0() {
-			GetCursor();
-			if (_cursorPos.x && lines[_cursorPos.y].text[_cursorPos.x - 1] != '\t') {
-				string tmp;
-				for (uint i = 0; i < params->indentSize; i++)tmp.push_back(' ');
-				EnterString<assistant_t>(tmp);
-			}
-			else 		
-				EnterCharacter<assistant_t>('\t');
-		}
 	};
 
 	class EditorAssistant {
 	public:
+		using Colors = ImGuiTextEditor::Colors;
 		ImGuiTextEditor* editor=0;
 		EditorAssistant() {}
 		EditorAssistant(ImGuiTextEditor& _editor){
-			init(_editor);
+			_init(_editor);
 		}
 		void init(ImGuiTextEditor& _editor) {
+			_init(_editor);
+		}
+		void _init(ImGuiTextEditor& _editor) {
 			editor = &_editor;
 			editor->BindAssistant(*this);
 		}
@@ -584,7 +607,7 @@ namespace Festa {
 			if (!editor)return;
 			ImGuiTextEditor::Line& l = editor->lines[line];
 			l.colors.clear();
-			uchar precol = ImGuiTextEditor::COLOR_MAX;
+			uchar precol = Colors::TYPE_MAX;
 			char isStr = 0;
 			//cout << "colorize " << l.text << endl;
 			for (uint i = 0; i < l.text.size(); i++) {
@@ -593,21 +616,21 @@ namespace Festa {
 				bool s = c == '\'' || c == '\"';
 				if (s)
 					isStr =isStr?0: c;
-				if (isStr || s)col = ImGuiTextEditor::STRING;
+				if (isStr || s)col = Colors::STRING;
 				else if (isSpace(c))col = 0;
-				else if (isLetter(c) ||
-					(i && isNumber(c) &&
-						(isLetter(l.text[i - 1]) ||
+				else if (CodeAnalysis::isLetter(c) ||
+					(i && CodeAnalysis::isNumber(c) &&
+						(CodeAnalysis::isLetter(l.text[i - 1]) ||
 							l.text[i - 1] == '\\' ||
 							l.text[i - 1] == '/')))
-					col = ImGuiTextEditor::TEXT;
-				else if (isNumber(c)) {
-					if (i && isNumber(l.text[i - 1]))
+					col = Colors::TEXT;
+				else if (CodeAnalysis::isNumber(c)) {
+					if (i && CodeAnalysis::isNumber(l.text[i - 1]))
 						col = precol;
-					else col = ImGuiTextEditor::NUMBER;
+					else col = Colors::NUMBER;
 				}
-				else if (c == ' ' || c == '\t')col = ImGuiTextEditor::BACKGROUND;
-				else col = ImGuiTextEditor::PUNCTUATION;
+				else if (c == ' ' || c == '\t')col = Colors::BACKGROUND;
+				else col = Colors::PUNCTUATION;
 				if (col != precol) {
 					l.colors.emplace_back(ImGuiTextEditor::ColorNode(col, i));
 					precol = col;
@@ -633,14 +656,16 @@ namespace Festa {
 			if (!editor)return true;
 			ImGuiTextEditor::Line& line = editor->CurrentLine();
 			const ivec2 cursor = editor->GetCursorPos();
-			if (ch == uint('(') || ch == uint('[') || ch == uint('{')) {
-				line.text.insert(cursor.x,1,match(char(ch)));
+			if (ch == uint('(') || ch == uint('[') || ch == uint('{')||
+				ch==uint('\'')||ch==uint('\"')) {
+				line.text.insert(cursor.x,1,CodeAnalysis::matchToken(char(ch)));
 				line.text.insert(cursor.x, 1, char(ch));
 				editor->SetCursorPos(cursor.y, cursor.x + 1);
 				return false;
 			}
 			else if (cursor.x<line.text.size()&&
-				(ch == uint(')') || ch == uint(']') || ch == uint('}'))
+				(ch == uint(')') || ch == uint(']') || ch == uint('}')||
+					ch==uint('\'')||ch==uint('\"'))
 				&& uint(line.text[cursor.x]) == ch) {
 				editor->SetCursorPos(cursor.y,cursor.x+1);
 				return false;
@@ -652,7 +677,7 @@ namespace Festa {
 			const ivec2 cursor = editor->GetCursorPos();
 			ImGuiTextEditor::Line& line = editor->CurrentLine();
 			if (!cursor.x||cursor.x==line.length())return true;
-			char m=match(line.text[cursor.x-1]);
+			char m=CodeAnalysis::matchToken(line.text[cursor.x-1]);
 			if(m&&line.text[cursor.x]==m) {
 				line.text.erase(cursor.x-1, 2);
 				editor->SetCursorPos(cursor.y,cursor.x-1);
@@ -663,31 +688,21 @@ namespace Festa {
 		static bool isSpace(char x) {
 			return x == ' ' || x == '\t';
 		}
-		static bool isNumber(char x) {
-			return '0' <= x && x <= '9';
-		}
-		static bool isLetter(char x) {
-			return ('a' <= x && x <= 'z') || ('A'<=x&&x<='Z')||x=='_';
-		}
-		static char match(char x) {
-			switch (x) {
-			case '(':
-				return ')';
-			case '[':
-				return ']';
-			case '{':
-				return '}';
-			dafault:
-				return 0;
-			}
+		virtual void applyChanges() {
+
 		}
 	};
 
 	class CppAssistant:public EditorAssistant {
 	public:
+		CodeAnalysis::CppSources* sources = 0;
+		Path path;
 		CppAssistant() {}
-		CppAssistant(ImGuiTextEditor& _editor) {
-			init(_editor);
+		void init(const Path& _path,ImGuiTextEditor& _editor,CodeAnalysis::CppSources& _sources) {
+			path = _path;
+			_init(_editor); 
+			sources = &_sources;
+			sources->addFile(path, "");
 		}
 		void Enter() {
 			if (!editor)return;
@@ -708,7 +723,7 @@ namespace Festa {
 			else if ((line.text.back() == '[' || 
 				line.text.back() == '(' || 
 				line.text.back() == '{')&&current.text.size()&&
-				match(line.text.back())==current.text[0]) {
+				CodeAnalysis::matchToken(line.text.back())==current.text[0]) {
 				editor->lines.insert(editor->lines.begin()+cursor.y, ImGuiTextEditor::Line(indent));
 				indent.resize(i);
 				editor->lines[cursor.y+1].text = indent + editor->lines[cursor.y+1].text;
@@ -721,6 +736,16 @@ namespace Festa {
 			}
 			ColorizeLine(cursor.y);
 
+		}
+		void applyChanges() {
+			auto& f=sources->applyChanges(path);
+			editor->SetErrors(f.errors);
+			cout << "ERRORS: \n";
+			for(auto& error:f.errors) {
+				cout << error.begin.y+1 << ":" << error.begin.x << " - " <<
+					error.end.y+1 << ":" << error.end.x <<"   "<<
+					error.msg << endl;
+			}
 		}
 	};
 

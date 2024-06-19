@@ -15,6 +15,8 @@
 #include <Windows.h>
 
 #include <map>
+#include <set>
+#include <unordered_set>
 #include <stack>
 #include <queue>
 #include <list>
@@ -219,46 +221,6 @@ namespace Festa {
 		}
 	};
 
-	template<typename T>
-	class StringMapping {
-	public:
-		typedef std::unordered_map<std::string, T*> map_t;
-		StringMapping() {}
-		~StringMapping() {
-			clear();
-		}
-		auto begin()const {
-			return m.begin();
-		}
-		auto end()const {
-			return m.end();
-		}
-		T& operator[](const std::string& key) {
-			T& ret = *get(key);
-			return ret;
-		}
-		T*& get(const std::string& key) {
-			T*& ret = m[key];
-			if (!ret)ret = new T();
-			return ret;
-		}
-		T*& find(const std::string& key) {
-			T*& ret = m[key];
-			return ret;
-		}
-		uint size()const {
-			return uint(m.size());
-		}
-		void clear() {
-			for (auto& v : m) {
-				if (v.second)delete v.second;
-			}
-			m.clear();
-		}
-	private:
-		map_t m;
-	};
-
 	template<typename T, typename ID_t = uint>
 	class BufferGenerator {
 	public:
@@ -424,6 +386,7 @@ namespace Festa {
 	class OrderedDict {
 	public:
 		typedef std::map<std::string, uint> map_t;
+		typedef std::pair<const std::string&, T&> pair_t;
 		struct iterator {
 			OrderedDict* obj=0;
 			uint i = 0;
@@ -434,12 +397,19 @@ namespace Festa {
 			bool operator!=(const iterator& it)const {
 				return i!=it.i;
 			}
-			std::pair<const std::string&, T&> operator*()const {
+			pair_t operator*()const {
 				if (obj->c[i].str)return { *obj->c[i].str,obj->c[i].data };
 				else return  {"",obj->c[i].data };
 			}
+			amr_ptr<pair_t> operator->()const {
+				return amr_ptr<pair_t>(**this);
+			}
 			iterator operator++() {
 				i++;
+				return *this;
+			}
+			iterator operator--() {
+				i--;
 				return *this;
 			}
 		};
@@ -457,17 +427,18 @@ namespace Festa {
 		}
 		void erase(const std::string& key) {
 			map_t::iterator it = m.find(key);
-			if (it==m.end())return;
-			uint pos = it->second;
-			for (uint i = pos + 1; i < size();i++)
+			if (it == m.end())return;
+			for (uint i = it->second + 1; i < size(); i++) {
 				m[*c[i].str]--;
-			c.erase(c.begin()+pos);
+			}
+			c.erase(c.begin() + it->second);
 			m.erase(key);
 		}
 		void erase(const iterator& it) {
 			erase((*it).first);
 		}
 		void rename(const std::string& oldName, const std::string& newName) {
+			if (oldName == newName)return;
 			insert(newName, (*this)[oldName]);
 			erase(oldName);
 		}
@@ -487,6 +458,15 @@ namespace Festa {
 		}
 		const std::string& key(uint i)const {
 			return *c[i].str;
+		}
+		uint index(const std::string& key)const {
+			return ((OrderedDict*)((void*)this))->m[key];
+		}
+		iterator iter(uint i)const {
+			return iterator(this, i);
+		}
+		iterator iter(const std::string& key)const {
+			return iterator(this,m[key]);
 		}
 		iterator begin()const {
 			return iterator(this,0);
@@ -511,7 +491,7 @@ namespace Festa {
 		OrderedDict operator+=(const OrderedDict& x) {
 			for (auto i : x)insert(i.first, i.second);
 		}
-	//private:
+	private:
 		struct Node {
 			const std::string* str;
 			T data;
@@ -523,6 +503,7 @@ namespace Festa {
 	class JsonData {
 	public:
 		typedef std::map<std::string, uint> map_t;
+		typedef std::pair<const std::string&, JsonData&> pair_t;
 		struct iterator {
 			JsonData* obj = 0;
 			//map_t::iterator i;
@@ -535,11 +516,18 @@ namespace Festa {
 			bool operator!=(const iterator& it)const {
 				return i != it.i;
 			}
-			std::pair<const std::string&, JsonData&> operator*()const {
+			pair_t operator*()const {
 				return { obj->c[i].str,*obj->c[i].x};
+			}
+			amr_ptr<pair_t> operator->()const {
+				return **this;
 			}
 			iterator operator++() {
 				i++;
+				return *this;
+			}
+			iterator operator--() {
+				i--;
 				return *this;
 			}
 		};
@@ -631,18 +619,17 @@ namespace Festa {
 		void erase(const std::string& key) {
 			map_t::iterator it = m.find(key);
 			if (it == m.end())return;
-			uint pos = it->second;
-			it++;
-			for (; it != m.end(); it++) {
-				it->second--;
+			for (uint i=it->second+1; i < size();i++) {
+				m[c[i].str]--;
 			}
-			c.erase(c.begin() + pos);
+			c.erase(c.begin() + it->second);
 			m.erase(key);
 		}
 		void erase(const iterator& it) {
 			erase((*it).first);
 		}
 		void rename(const std::string& oldName, const std::string& newName) {
+			if (oldName == newName)return;
 			insert(newName, (*this)[oldName]);
 			erase(oldName);
 		}

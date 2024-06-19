@@ -7,32 +7,18 @@
 #include "include/utils/gui.h"
 #include "include/utils/game.h"
 
-#include<opencv2/opencv.hpp>
+#define LIB_OPENCV
+//#define LIB_IRRKLANG
 
 using namespace Festa;
 
-#pragma comment(lib,"opengl32.lib")
-#pragma comment(lib,"libs/glew32s.lib")
-#pragma comment(lib,"libs/glfw3.lib")
-#pragma comment(lib,"libs/irrKlang.lib")
-
+#ifdef LIB_OPENCV
+#include<opencv2/opencv.hpp>
 #ifdef _DEBUG
 #pragma comment(lib,"libs/opencv_world440d.lib")
 #else
 #pragma comment(lib,"libs/opencv_world440.lib")
 #endif
-
-#pragma comment(lib,"libs/assimp-vc140-mt.lib")
-#pragma comment(lib,"libs/freetype.lib")
-
-Logger Festa::LOGGER;
-Program* Program::activeProgram = 0;
-bool Window::first = true;
-ISoundEngine* Sound::engine;
-uint Joystick::Assign = 0;
-
-PFNWGLSWAPINTERVALFARPROC Festa::wglSwapIntervalEXT = 0;
-
 #define toMat(ptr) (*(cv::Mat*)(ptr))
 #define toVideoCapture(ptr) (*(cv::VideoCapture*)(ptr))
 
@@ -55,7 +41,7 @@ void Image::load(const std::string& file) {
 }
 
 void Image::init(void* data, int w, int h, int c) {
-	_mat = new cv::Mat(h, w, CV_MAKETYPE(CV_8U,c), data);
+	_mat = new cv::Mat(h, w, CV_MAKETYPE(CV_8U, c), data);
 }
 void Image::init(const vec3& color, int w, int h) {
 	_mat = new cv::Mat(h, w, CV_8UC3, cv::Scalar(uchar(color.z * 255.0f),
@@ -73,7 +59,7 @@ Image::Image(const Image& x) {
 	toMat(x._mat).copyTo(toMat(_mat));
 }
 void Image::operator=(const Image& x) {
-	if(!_mat)_mat = new cv::Mat();
+	if (!_mat)_mat = new cv::Mat();
 	toMat(x._mat).copyTo(toMat(_mat));
 }
 void Image::release() {
@@ -172,9 +158,9 @@ void Video::init(int device) {
 	_cap = new cv::VideoCapture();
 	toVideoCapture(_cap).open(device);
 }
-VirtualValue<int> Video::width(){
+VirtualValue<int> Video::width() {
 	return VirtualValue<int>([&](int val) {
-		toVideoCapture(_cap).set(cv::CAP_PROP_FRAME_WIDTH,val);
+		toVideoCapture(_cap).set(cv::CAP_PROP_FRAME_WIDTH, val);
 		}, [&] {
 			return (int)toVideoCapture(_cap)
 				.get(cv::CAP_PROP_FRAME_WIDTH);
@@ -229,6 +215,68 @@ void Video::show(const std::string& title) {
 		frame.show(title, 1);
 	}
 }
+#endif
+
+#ifdef LIB_IRRKLANG
+#pragma comment(lib,"libs/irrKlang.lib")
+inline ISoundEngine*& getSoundEngine() {
+	if (!Sound::engine) {
+		Sound::engine = createIrrKlangDevice();
+		if (!Sound::engine)LOGGER.error("Failed to init irrKlang");
+	}
+	return Sound::engine;
+}
+
+void Sound::init(const std::string& _file, bool effects, bool looped) {
+	file = _file;
+	sound = getSoundEngine()->play2D(file.c_str(), looped, true, true, ESM_AUTO_DETECT, effects);
+	if (!sound)LOGGER.error("Failed to create the sound: " + file);
+	if (effects) fx = sound->getSoundEffectControl();
+	else fx = 0;
+	sound3d = false;
+}
+void Sound::init(const std::string& _file, const vec3& pos, bool effects, bool looped) {
+	file = _file;
+	sound = getSoundEngine()->play3D(file.c_str(), vec3irr(pos), looped, true, true, ESM_AUTO_DETECT, effects);
+	if (!sound)LOGGER.error("Failed to create the sound: " + file);
+	if (effects) fx = sound->getSoundEffectControl();
+	else fx = 0;
+	sound3d = true;
+}
+
+void Sound::reload() {
+	bool looped = isLooped(), effects = fx;
+	vec3 position = pos();
+	sound->drop();
+	if (sound3d)sound = getSoundEngine()->play3D(file.c_str(), vec3irr(position), looped, true, true, ESM_AUTO_DETECT, effects);
+	else sound = getSoundEngine()->play2D(file.c_str(), looped, true, true, ESM_AUTO_DETECT, effects);
+	if (!sound)LOGGER.error("Failed to create the sound: " + file);
+	if (effects) fx = sound->getSoundEffectControl();
+	else fx = 0;
+}
+void Sound::setListener(const Camera& camera) {
+	vec3 pos = camera.pos, front = camera.front();
+	getSoundEngine()->setListenerPosition(vec3irr(pos), vec3irr(front));
+}
+#endif
+
+
+#pragma comment(lib,"opengl32.lib")
+#pragma comment(lib,"libs/glew32s.lib")
+#pragma comment(lib,"libs/glfw3.lib")
+
+#pragma comment(lib,"libs/assimp-vc140-mt.lib")
+#pragma comment(lib,"libs/freetype.lib")
+
+Logger Festa::LOGGER;
+Program* Program::activeProgram = 0;
+bool Window::first = true;
+ISoundEngine* Sound::engine;
+uint Joystick::Assign = 0;
+
+PFNWGLSWAPINTERVALFARPROC Festa::wglSwapIntervalEXT = 0;
+
+
 
 
 static void initEngine(const Version2& glVersion,bool resizable) {
@@ -306,45 +354,7 @@ void FreetypeFont::init(const std::string& file, uint height, uint width) {
 	FT_Set_Pixel_Sizes(face, width, height);
 }
 
-inline ISoundEngine*& getSoundEngine() {
-	if (!Sound::engine) {
-		Sound::engine = createIrrKlangDevice();
-		if (!Sound::engine)LOGGER.error("Failed to init irrKlang");
-	}
-	return Sound::engine;
-}
 
-void Sound::init(const std::string& _file, bool effects, bool looped) {
-	file = _file;
-	sound = getSoundEngine()->play2D(file.c_str(), looped, true, true, ESM_AUTO_DETECT, effects);
-	if (!sound)LOGGER.error("Failed to create the sound: " + file);
-	if (effects) fx = sound->getSoundEffectControl();
-	else fx = 0;
-	sound3d = false;
-}
-void Sound::init(const std::string& _file, const vec3& pos, bool effects, bool looped) {
-	file = _file;
-	sound = getSoundEngine()->play3D(file.c_str(), vec3irr(pos), looped, true, true, ESM_AUTO_DETECT, effects);
-	if (!sound)LOGGER.error("Failed to create the sound: " + file);
-	if (effects) fx = sound->getSoundEffectControl();
-	else fx = 0;
-	sound3d = true;
-}
-
-void Sound::reload() {
-	bool looped = isLooped(), effects = fx;
-	vec3 position = pos();
-	sound->drop();
-	if (sound3d)sound = getSoundEngine()->play3D(file.c_str(), vec3irr(position), looped, true, true, ESM_AUTO_DETECT, effects);
-	else sound = getSoundEngine()->play2D(file.c_str(), looped, true, true, ESM_AUTO_DETECT, effects);
-	if (!sound)LOGGER.error("Failed to create the sound: " + file);
-	if (effects) fx = sound->getSoundEffectControl();
-	else fx = 0;
-}
-void Sound::setListener(const Camera& camera) {
-	vec3 pos = camera.pos, front = camera.front();
-	getSoundEngine()->setListenerPosition(vec3irr(pos), vec3irr(front));
-}
 
 
 Path Festa::askOpenFileName(HWND hwnd, const wchar_t* filter, const String& title, const wchar_t* initDir) {
